@@ -51,7 +51,16 @@ class ActionEncoding(IntEnum):
 
 
 # === Individual Dataset Configs ===
+# each of these gets destructured and passed into `make_dataset_from_rlds` in a loop in `make_interleaved_dataset`
 OXE_DATASET_CONFIGS = {
+    "reaching_target_simplified_camera_position_dataset_tensorflow": {
+        # read docstring of `make_dataset_from_rlds` to understand how these keys are used
+        "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["state_observation"],
+        "state_encoding": StateEncoding.POS_EULER,
+        "action_encoding": ActionEncoding.EEF_POS,
+    },
     "fractal20220817_data": {
         "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},

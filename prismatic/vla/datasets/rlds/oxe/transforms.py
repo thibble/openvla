@@ -841,8 +841,41 @@ def libero_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     return trajectory
 
 
+def reaching_target_simplified_camera_position_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Here a single trajectory looks like: 
+    trajectory.keys() == dict_keys(['is_first', 'state_observation', 'language_instruction', 'image_observation', 'is_last', 'action', 'traj_metadata', '_len', '_traj_index', '_frame_index'])
+    trajectory['action'] == <tf.Tensor 'args_3:0' shape=(None, 7) dtype=float32>
+    trajectory['state_observation'] == <tf.Tensor 'args_8:0' shape=(None, 8) dtype=float32>
+    trajectory['image_observation'] == <tf.Tensor 'args_4:0' shape=(None,) dtype=string>
+    """
+    # Create observation dict if it doesn't exist
+    if "observation" not in trajectory:
+        trajectory["observation"] = {}
+    
+    # Extract EEF state (first 6 values) and gripper state (last value) from state_observation
+    trajectory["observation"]["state_observation"] = trajectory["state_observation"]
+
+    # Decode JPEG strings to RGB arrays
+    # Since image_observation is a batch of JPEG strings, we need to decode each one
+    trajectory["observation"]["image"] = tf.map_fn(
+        lambda x: tf.io.decode_jpeg(x, channels=3),
+        trajectory["image_observation"],
+        fn_output_signature=tf.TensorSpec(shape=[224, 224, 3], dtype=tf.uint8)
+    )
+
+
+    assert "action" in trajectory, f"Action not found in trajectory: {trajectory.keys()}"
+    assert trajectory["action"].shape == (trajectory["state_observation"].shape[0], 7), f"Action shape: {trajectory['action'].shape}, state_observation shape: {trajectory['state_observation'].shape}"
+
+    # TODO: check if we need to invert the gripper action
+    
+    return trajectory
+
+
 # === Registry ===
 OXE_STANDARDIZATION_TRANSFORMS = {
+    "reaching_target_simplified_camera_position_dataset_tensorflow": reaching_target_simplified_camera_position_dataset_transform,
     "bridge_oxe": bridge_oxe_dataset_transform,
     "bridge_orig": bridge_orig_dataset_transform,
     "bridge_dataset": bridge_orig_dataset_transform,

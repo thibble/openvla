@@ -1,0 +1,14 @@
+python vla-scripts/finetune_singlegpu.py \
+    --vla_path "openvla/openvla-7b" \
+    --data_root_dir "./datasets" \
+    --dataset_name reaching_target_simplified_camera_position_dataset_tensorflow \
+    --run_root_dir "./checkpoints" \
+    --adapter_tmp_dir "./adapters_tmp" \
+    --lora_rank 32 \
+    --batch_size 2 \
+    --grad_accumulation_steps 16 \
+    --learning_rate 5e-4 \
+    --image_aug False \
+    --wandb_project openvla_finetune_mikhail \
+    --wandb_entity botello_antonio-technical-university-of-munich  \
+    --save_steps 1000  \

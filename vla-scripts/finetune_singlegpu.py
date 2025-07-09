@@ -1,8 +1,8 @@
 """
-finetune.py
+finetune_singlegpu.py
 
 Simple script for parameter-efficient fine-tuning of OpenVLA models loaded through the HuggingFace AutoClasses, using
-HuggingFace PEFT library for low-rank adaptation (LoRA).
+HuggingFace PEFT library for low-rank adaptation (LoRA). This version is for single GPU training only.
 
 Notes & Benchmarks:
     - Requires PEFT (`pip install peft==0.11.1`)
@@ -11,8 +11,8 @@ Notes & Benchmarks:
         + One 80 GB GPU can fit a Batch Size of 24
 
 Run with:
-    - [Single Node Multi-GPU (= $K) ]: torchrun --standalone --nnodes 1 --nproc-per-node $K vla-scripts/finetune.py
-    - [Override Config Values]: torchrun --standalone --nnodes 1 --nproc-per-node $K vla-scripts/finetune.py \
+    - [Single GPU]: python vla-scripts/finetune_singlegpu.py
+    - [Override Config Values]: python vla-scripts/finetune_singlegpu.py \
                                     --data_root_dir <PATH/TO/RLDS/DATASETS/DIRECTORY> \
                                     --dataset_name <DATASET_NAME> \
                                     --run_root_dir <PATH/TO/LOGS/DIR> \
@@ -27,11 +27,8 @@ from typing import Optional
 
 import draccus
 import torch
-import torch.distributed as dist
 import tqdm
-from accelerate import PartialState
 from peft import LoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_training
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from transformers import AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig
@@ -114,10 +111,9 @@ class FinetuneConfig:
 def finetune(cfg: FinetuneConfig) -> None:
     print(f"Fine-tuning OpenVLA Model `{cfg.vla_path}` on `{cfg.dataset_name}`")
 
-    # [Validate] Ensure GPU Available & Set Device / Distributed Context
+    # [Validate] Ensure GPU Available & Set Device
     assert torch.cuda.is_available(), "Fine-tuning assumes at least one GPU is available!"
-    distributed_state = PartialState()
-    torch.cuda.set_device(device_id := distributed_state.local_process_index)
+    device = torch.device("cuda:0")
     torch.cuda.empty_cache()
 
     # Configure Unique Experiment ID & Log Directory
@@ -167,7 +163,7 @@ def finetune(cfg: FinetuneConfig) -> None:
     if cfg.use_quantization:
         vla = prepare_model_for_kbit_training(vla)
     else:
-        vla = vla.to(device_id)
+        vla = vla.to(device)
 
     # [LoRA] Wrap Model w/ PEFT `LoraConfig` =>> by default we set `target_modules=all-linear`
     if cfg.use_lora:
@@ -180,9 +176,6 @@ def finetune(cfg: FinetuneConfig) -> None:
         )
         vla = get_peft_model(vla, lora_config)
         vla.print_trainable_parameters()
-
-    # Wrap VLA in PyTorch DDP Wrapper for Multi-GPU Training
-    vla = DDP(vla, device_ids=[device_id], find_unused_parameters=True, gradient_as_bucket_view=True)
 
     # Create Optimizer =>> note that we default to a simple constant learning rate!
     trainable_params = [param for param in vla.parameters() if param.requires_grad]
@@ -201,7 +194,7 @@ def finetune(cfg: FinetuneConfig) -> None:
     #
     # vla_dataset = DummyDataset(
     #     action_tokenizer,
-    #     processor.tokenizer,ActionEncoding.JOINT_POS
+    #     processor.tokenizer,
     #     image_transform=processor.image_processor.apply_transform,
     #     prompt_builder_fn=PurePromptBuilder if "v01" not in cfg.vla_path else VicunaV15ChatPromptBuilder,
     # )
@@ -216,56 +209,13 @@ def finetune(cfg: FinetuneConfig) -> None:
         cfg.data_root_dir,
         cfg.dataset_name,
         batch_transform,
-        resize_resolution=tuple(vla.module.config.image_sizes),
+        resize_resolution=tuple(vla.config.image_sizes),
         shuffle_buffer_size=cfg.shuffle_buffer_size,
         image_aug=cfg.image_aug,
     )
 
-    # Log Dataset Information
-    print(f"\n{'='*60}")
-    print(f"Dataset Information:")
-    print(f"{'='*60}")
-    print(f"Dataset Name: {cfg.dataset_name}")
-    print(f"Data Root Directory: {cfg.data_root_dir}")
-    print(f"Image Augmentation: {cfg.image_aug}")
-    print(f"Resize Resolution: {tuple(vla.module.config.image_sizes)}")
-    print(f"Shuffle Buffer Size: {cfg.shuffle_buffer_size}")
-    
-    # Log Dataset Statistics
-    if hasattr(vla_dataset, 'dataset_statistics') and vla_dataset.dataset_statistics:
-        print(f"\nDataset Statistics:")
-        stats = vla_dataset.dataset_statistics
-        
-        # Basic counts
-        if 'num_trajectories' in stats:
-            print(f"  - Number of Trajectories: {stats['num_trajectories']}")
-        if 'num_transitions' in stats:
-            print(f"  - Number of Transitions: {stats['num_transitions']}")
-        
-        # Action statistics
-        if 'action' in stats:
-            action_stats = stats['action']
-            if 'mean' in action_stats:
-                print(f"  - Action Dimensions: {action_stats['mean'].shape[-1]}")
-                print(f"  - Action Mean: {action_stats['mean']}")
-            if 'std' in action_stats:
-                print(f"  - Action Std: {action_stats['std']}")
-            if 'min' in action_stats:
-                print(f"  - Action Min: {action_stats['min']}")
-            if 'max' in action_stats:
-                print(f"  - Action Max: {action_stats['max']}")
-        
-        # Observation statistics
-        if 'observation' in stats and 'proprio' in stats['observation']:
-            proprio_stats = stats['observation']['proprio']
-            if 'mean' in proprio_stats:
-                print(f"  - Proprioception Dimensions: {proprio_stats['mean'].shape[-1]}")
-                
-    print(f"{'='*60}\n")
-
     # [Important] Save Dataset Statistics =>> used to de-normalize actions for inference!
-    if distributed_state.is_main_process:
-        save_dataset_statistics(vla_dataset.dataset_statistics, run_dir)
+    save_dataset_statistics(vla_dataset.dataset_statistics, run_dir)
 
     # Create Collator and DataLoader
     collator = PaddedCollatorForActionPrediction(
@@ -280,8 +230,7 @@ def finetune(cfg: FinetuneConfig) -> None:
     )
 
     # Initialize Logging =>> W&B
-    if distributed_state.is_main_process:
-        wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=f"ft+{exp_id}")
+    wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=f"ft+{exp_id}")
 
     # Deque to store recent train metrics (used for computing smoothened metrics for gradient accumulation)
     recent_losses = deque(maxlen=cfg.grad_accumulation_steps)
@@ -289,19 +238,15 @@ def finetune(cfg: FinetuneConfig) -> None:
     recent_l1_losses = deque(maxlen=cfg.grad_accumulation_steps)
 
     # Train!
-    print(f"Starting training for {cfg.max_steps} steps...")
-    print(f"Batch size: {cfg.batch_size}, Gradient accumulation steps: {cfg.grad_accumulation_steps}")
-    print(f"Effective batch size: {cfg.batch_size * cfg.grad_accumulation_steps}")
-    
     with tqdm.tqdm(total=cfg.max_steps, leave=False) as progress:
         vla.train()
         optimizer.zero_grad()
         for batch_idx, batch in enumerate(dataloader):
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 output: CausalLMOutputWithPast = vla(
-                    input_ids=batch["input_ids"].to(device_id),
-                    attention_mask=batch["attention_mask"].to(device_id),
-                    pixel_values=batch["pixel_values"].to(torch.bfloat16).to(device_id),
+                    input_ids=batch["input_ids"].to(device),
+                    attention_mask=batch["attention_mask"].to(device),
+                    pixel_values=batch["pixel_values"].to(torch.bfloat16).to(device),
                     labels=batch["labels"],
                 )
                 loss = output.loss
@@ -313,7 +258,7 @@ def finetune(cfg: FinetuneConfig) -> None:
             normalized_loss.backward()
 
             # Compute Accuracy and L1 Loss for Logging
-            action_logits = output.logits[:, vla.module.vision_backbone.featurizer.patch_embed.num_patches : -1]
+            action_logits = output.logits[:, vla.vision_backbone.featurizer.patch_embed.num_patches : -1]
             action_preds = action_logits.argmax(dim=2)
             action_gt = batch["labels"][:, 1:].to(action_preds.device)
             mask = action_gt > action_tokenizer.action_token_begin_idx
@@ -347,7 +292,7 @@ def finetune(cfg: FinetuneConfig) -> None:
             smoothened_l1_loss = sum(recent_l1_losses) / len(recent_l1_losses)
 
             # Push Metrics to W&B (every 10 gradient steps)
-            if distributed_state.is_main_process and gradient_step_idx % 10 == 0:
+            if gradient_step_idx % 10 == 0:
                 wandb.log(
                     {
                         "train_loss": smoothened_loss,
@@ -365,18 +310,14 @@ def finetune(cfg: FinetuneConfig) -> None:
 
             # Save Model Checkpoint =>> by default, only keeps the latest checkpoint, continually overwriting it!
             if gradient_step_idx > 0 and gradient_step_idx % cfg.save_steps == 0:
-                if distributed_state.is_main_process:
-                    print(f"Saving Model Checkpoint for Step {gradient_step_idx}")
+                print(f"Saving Model Checkpoint for Step {gradient_step_idx}")
 
-                    # If LoRA, we first save adapter weights, then merge into full model; otherwise, default save!
-                    save_dir = adapter_dir if cfg.use_lora else run_dir
+                # If LoRA, we first save adapter weights, then merge into full model; otherwise, default save!
+                save_dir = adapter_dir if cfg.use_lora else run_dir
 
-                    # Save Processor & Weights
-                    processor.save_pretrained(run_dir)
-                    vla.module.save_pretrained(save_dir)
-
-                # Wait for processor and adapter weights to be saved by main process
-                dist.barrier()
+                # Save Processor & Weights
+                processor.save_pretrained(run_dir)
+                vla.save_pretrained(save_dir)
 
                 # Merge LoRA weights into model backbone for faster inference
                 #   =>> Note that merging is slow and can be done post-hoc to speed up training
@@ -386,28 +327,24 @@ def finetune(cfg: FinetuneConfig) -> None:
                     )
                     merged_vla = PeftModel.from_pretrained(base_vla, adapter_dir)
                     merged_vla = merged_vla.merge_and_unload()
-                    if distributed_state.is_main_process:
-                        if cfg.save_latest_checkpoint_only:
-                            # Overwrite latest checkpoint
-                            merged_vla.save_pretrained(run_dir)
+                    if cfg.save_latest_checkpoint_only:
+                        # Overwrite latest checkpoint
+                        merged_vla.save_pretrained(run_dir)
 
-                            print(f"Saved Model Checkpoint for Step {gradient_step_idx} at: {run_dir}")
-                        else:
-                            # Prepare to save checkpoint in new directory
-                            checkpoint_dir = Path(str(run_dir) + f"--{gradient_step_idx}_chkpt")
-                            os.makedirs(checkpoint_dir, exist_ok=True)
+                        print(f"Saved Model Checkpoint for Step {gradient_step_idx} at: {run_dir}")
+                    else:
+                        # Prepare to save checkpoint in new directory
+                        checkpoint_dir = Path(str(run_dir) + f"--{gradient_step_idx}_chkpt")
+                        os.makedirs(checkpoint_dir, exist_ok=True)
 
-                            # Save dataset statistics to new directory
-                            save_dataset_statistics(vla_dataset.dataset_statistics, checkpoint_dir)
+                        # Save dataset statistics to new directory
+                        save_dataset_statistics(vla_dataset.dataset_statistics, checkpoint_dir)
 
-                            # Save processor and model weights to new directory
-                            processor.save_pretrained(checkpoint_dir)
-                            merged_vla.save_pretrained(checkpoint_dir)
+                        # Save processor and model weights to new directory
+                        processor.save_pretrained(checkpoint_dir)
+                        merged_vla.save_pretrained(checkpoint_dir)
 
-                            print(f"Saved Model Checkpoint for Step {gradient_step_idx} at: {checkpoint_dir}")
-
-                # Block on Main Process Checkpointing
-                dist.barrier()
+                        print(f"Saved Model Checkpoint for Step {gradient_step_idx} at: {checkpoint_dir}")
 
             # Stop training when max_steps is reached
             if gradient_step_idx == cfg.max_steps:
