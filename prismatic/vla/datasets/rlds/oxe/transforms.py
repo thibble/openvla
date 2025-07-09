@@ -873,9 +873,67 @@ def reaching_target_simplified_camera_position_dataset_transform(trajectory: Dic
     return trajectory
 
 
+def hanrui_pickandplace_500ep_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Transform function for hanrui_pickandplace_500ep dataset.
+    Similar to reaching_target_simplified_camera_position_dataset_transform but:
+    - Relativizes "state_observation" (subtract each subsequent frame from the previous) and writes to "action" field
+    - Normalizes gripper position from 0-250 to 0-1
+    """
+    # Create observation dict if it doesn't exist
+    if "observation" not in trajectory:
+        trajectory["observation"] = {}
+    
+    # Extract state_observation
+    state_obs = trajectory["state_observation"]
+    trajectory["observation"]["state_observation"] = state_obs
+
+    # Decode JPEG strings to RGB arrays
+    trajectory["observation"]["image"] = tf.map_fn(
+        lambda x: tf.io.decode_jpeg(x, channels=3),
+        trajectory["image_observation"],
+        fn_output_signature=tf.TensorSpec(shape=[224, 224, 3], dtype=tf.uint8)
+    )
+
+    # Relativize state_observation: compute differences between subsequent frames
+    # Frame i contains the difference: state[i+1] - state[i]
+    # For last frame, we'll use zeros (no next frame to subtract)
+    state_obs_diff = tf.concat([
+        state_obs[1:] - state_obs[:-1],  # Frames 0 to n-2: difference to next frame
+        tf.zeros([1, tf.shape(state_obs)[1]], dtype=state_obs.dtype)  # Last frame: zeros
+    ], axis=0)
+    
+    # Normalize gripper position (assuming it's the last dimension of state_observation)
+    # Split into EEF state (first 7 dims) and gripper (last dim)
+    eef_state_diff = state_obs_diff[:, :7]
+    gripper_state_diff = state_obs_diff[:, 7:8]  # Keep as 2D tensor
+    
+    # The gripper position is between 0 and 250, normalize to 0-1
+    # We need to handle the differential values, so we normalize the original gripper values first
+    # then compute the difference
+    gripper_orig = state_obs[:, 7:8]
+    gripper_normalized = gripper_orig / 250.0  # Normalize to 0-1
+    
+    # Now compute the difference for normalized gripper
+    # Frame i contains the difference: gripper[i+1] - gripper[i]
+    gripper_normalized_diff = tf.concat([
+        gripper_normalized[1:] - gripper_normalized[:-1],  # Frames 0 to n-2: difference to next frame
+        tf.zeros([1, 1], dtype=gripper_normalized.dtype)  # Last frame: zero
+    ], axis=0)
+    
+    # Combine EEF state differences and normalized gripper differences
+    trajectory["action"] = tf.concat([
+        eef_state_diff,
+        gripper_normalized_diff
+    ], axis=-1)
+
+    return trajectory
+
+
 # === Registry ===
 OXE_STANDARDIZATION_TRANSFORMS = {
     "reaching_target_simplified_camera_position_dataset_tensorflow": reaching_target_simplified_camera_position_dataset_transform,
+    "hanrui_pickandplace_500ep": hanrui_pickandplace_500ep_dataset_transform,
     "bridge_oxe": bridge_oxe_dataset_transform,
     "bridge_orig": bridge_orig_dataset_transform,
     "bridge_dataset": bridge_orig_dataset_transform,
