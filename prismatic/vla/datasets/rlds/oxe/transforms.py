@@ -872,10 +872,60 @@ def reaching_target_simplified_camera_position_dataset_transform(trajectory: Dic
     
     return trajectory
 
+def smlr_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Transform function for hanrui_pickandplace_500ep dataset. TODO: rename from smlr_dataset to hanrui_pickandplace_500ep_dataset_transform
+    
+    Similar to reaching_target_simplified_camera_position_dataset_transform but:
+    - Relativizes position and rotation from "state_observation" (subtract each subsequent frame from the previous)
+    - Normalizes gripper position from 0-250 to 0-1 and outputs absolute values
+    - Writes to "action" field with format: [delta_pos(3), delta_rot(3), abs_gripper(1)]
+    """
+    # Create observation dict if it doesn't exist
+    if "observation" not in trajectory:
+        trajectory["observation"] = {}
+
+    # Extract state_observation - shape: [batch_size, 7]
+    # Format: [3D pos (abs), 3D rot euler (abs), 1D gripper (0-250)]
+    state_obs = trajectory["state_observation"]
+    trajectory["observation"]["state_observation"] = state_obs
+
+    # Decode JPEG strings to RGB arrays
+    trajectory["observation"]["image"] = tf.map_fn(
+        lambda x: tf.io.decode_jpeg(x, channels=3),
+        trajectory["image_observation"],
+        fn_output_signature=tf.TensorSpec(shape=[224, 224, 3], dtype=tf.uint8)
+    )
+
+    # Relativize position and rotation: compute differences between subsequent frames
+    # Frame i contains the difference: state[i+1] - state[i]
+    # For last frame, we'll use zeros (no next frame to subtract)
+    pos_rot_obs = state_obs[:, :6]  # Position and rotation components
+    pos_rot_diff = tf.concat([
+        pos_rot_obs[1:] - pos_rot_obs[:-1],  # Frames 0 to n-2: difference to next frame
+        tf.zeros([1, 6], dtype=pos_rot_obs.dtype)  # Last frame: zeros
+    ], axis=0)
+
+    # Extract and normalize gripper position (last dimension)
+    # Gripper is between 0 and 250, normalize to 0-1 absolute values
+    gripper_orig = state_obs[:, 6:7]  # Keep as 2D tensor
+    gripper_normalized = gripper_orig / 250.0  # Normalize to 0-1
+
+    # Combine position/rotation deltas with absolute gripper values
+    # Output format: [delta_pos(3), delta_rot(3), abs_gripper(1)]
+    trajectory["action"] = tf.concat([
+        pos_rot_diff,       # Delta position and rotation (6 dims)
+        gripper_normalized  # Absolute gripper value (1 dim)
+    ], axis=-1)
+
+    return trajectory
+
+
 
 # === Registry ===
 OXE_STANDARDIZATION_TRANSFORMS = {
     "reaching_target_simplified_camera_position_dataset_tensorflow": reaching_target_simplified_camera_position_dataset_transform,
+    "smlr_dataset": smlr_dataset_transform,
     "bridge_oxe": bridge_oxe_dataset_transform,
     "bridge_orig": bridge_orig_dataset_transform,
     "bridge_dataset": bridge_orig_dataset_transform,

@@ -1,14 +1,15 @@
 python vla-scripts/finetune_singlegpu.py \
     --vla_path "openvla/openvla-7b" \
-    --data_root_dir "./datasets" \
-    --dataset_name reaching_target_simplified_camera_position_dataset_tensorflow \
-    --run_root_dir "./checkpoints" \
-    --adapter_tmp_dir "./adapters_tmp" \
+    --data_root_dir "./datasets/tensorflow_datasets_hanriu_500" \
+    --dataset_name "smlr_dataset" \
+    --run_root_dir "./checkpoints/hanrui_500_mikhail" \
+    --adapter_tmp_dir "./adapters_tmp_hanrui_500_mikhail" \
     --lora_rank 32 \
-    --batch_size 2 \
-    --grad_accumulation_steps 16 \
+    --batch_size 4 \
+    --grad_accumulation_steps 8 \
     --learning_rate 5e-4 \
     --image_aug False \
     --wandb_project openvla_finetune_mikhail \
     --wandb_entity botello_antonio-technical-university-of-munich  \
-    --save_steps 1000  \
+    --save_steps 1000 \
+    --save_latest_checkpoint_only False
