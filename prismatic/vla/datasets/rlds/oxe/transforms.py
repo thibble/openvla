@@ -896,10 +896,11 @@ def hanrui_pickandplace_500ep_dataset_transform(trajectory: Dict[str, Any]) -> D
     )
 
     # Relativize state_observation: compute differences between subsequent frames
-    # For first frame, we'll use zeros (no previous frame to subtract from)
+    # Frame i contains the difference: state[i+1] - state[i]
+    # For last frame, we'll use zeros (no next frame to subtract)
     state_obs_diff = tf.concat([
-        tf.zeros([1, tf.shape(state_obs)[1]], dtype=state_obs.dtype),  # First frame: zeros
-        state_obs[1:] - state_obs[:-1]  # Subsequent frames: difference from previous
+        state_obs[1:] - state_obs[:-1],  # Frames 0 to n-2: difference to next frame
+        tf.zeros([1, tf.shape(state_obs)[1]], dtype=state_obs.dtype)  # Last frame: zeros
     ], axis=0)
     
     # Normalize gripper position (assuming it's the last dimension of state_observation)
@@ -914,9 +915,10 @@ def hanrui_pickandplace_500ep_dataset_transform(trajectory: Dict[str, Any]) -> D
     gripper_normalized = gripper_orig / 250.0  # Normalize to 0-1
     
     # Now compute the difference for normalized gripper
+    # Frame i contains the difference: gripper[i+1] - gripper[i]
     gripper_normalized_diff = tf.concat([
-        tf.zeros([1, 1], dtype=gripper_normalized.dtype),  # First frame: zero
-        gripper_normalized[1:] - gripper_normalized[:-1]  # Subsequent frames: difference
+        gripper_normalized[1:] - gripper_normalized[:-1],  # Frames 0 to n-2: difference to next frame
+        tf.zeros([1, 1], dtype=gripper_normalized.dtype)  # Last frame: zero
     ], axis=0)
     
     # Combine EEF state differences and normalized gripper differences
