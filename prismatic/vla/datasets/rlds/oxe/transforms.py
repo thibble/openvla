@@ -27,6 +27,28 @@ from prismatic.vla.datasets.rlds.utils.data_utils import (
     relabel_bridge_actions,
 )
 
+def smlr_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    # Convert image + state into 'observation' dict
+    trajectory["observation"] = {
+        "image": trajectory["image_observation"],
+        "EEF_state": trajectory["state_observation"][:, :6],  # pos + euler/quat
+        "gripper_state": trajectory["state_observation"][:, -1:]  # 1D
+    }
+
+    # Cast gripper action (last element) to binary open/close
+    from prismatic.vla.datasets.rlds.utils.data_utils import binarize_gripper_actions
+    trajectory["action"] = tf.concat(
+        [trajectory["action"][:, :6],  # XYZ + rot
+         binarize_gripper_actions(trajectory["action"][:, -1])[:, None]],  # gripper
+        axis=-1
+    )
+
+    # Decode byte string instructions
+    trajectory["language_instruction"] = tf.strings.strip(trajectory["language_instruction"])
+
+    return trajectory
+
+
 
 def bridge_oxe_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -843,6 +865,7 @@ def libero_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
 
 # === Registry ===
 OXE_STANDARDIZATION_TRANSFORMS = {
+    "smlr_dataset": smlr_dataset_transform,
     "bridge_oxe": bridge_oxe_dataset_transform,
     "bridge_orig": bridge_orig_dataset_transform,
     "bridge_dataset": bridge_orig_dataset_transform,

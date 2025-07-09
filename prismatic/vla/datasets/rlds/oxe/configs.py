@@ -52,6 +52,33 @@ class ActionEncoding(IntEnum):
 
 # === Individual Dataset Configs ===
 OXE_DATASET_CONFIGS = {
+    # "smlr_dataset": {
+    #     "image_obs_keys": {
+    #         "primary": "image_observation", 
+    #         "secondary": None,
+    #         "wrist": None
+    #     },
+    #     "depth_obs_keys": {
+    #         "primary": None,
+    #         "secondary": None,
+    #         "wrist": None
+    #     },
+    #     "state_obs_keys": [
+    #         "state_observation",  # ← 7-dim: [3 pos, 3 ori, 1 gripper]
+    #         None,
+    #         None
+    #     ],
+    #     "state_encoding": StateEncoding.POS_EULER,  
+    #     "action_encoding": ActionEncoding.EEF_POS,  
+    # },
+    "smlr_dataset": {
+        "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["EEF_state", None, "gripper_state"],
+        "state_encoding": StateEncoding.POS_EULER,  
+        "action_encoding": ActionEncoding.EEF_POS,
+    },
+
     "fractal20220817_data": {
         "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
