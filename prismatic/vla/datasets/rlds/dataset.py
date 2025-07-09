@@ -238,7 +238,30 @@ def make_dataset_from_rlds(
 
     dataset = dl.DLataset.from_rlds(builder, split=split, shuffle=shuffle, num_parallel_reads=num_parallel_reads)
 
+    """
+    The contents of the first dataset item before this line:
+    
+    Keys: is_first, state_observation, language_instruction, image_observation, is_last, action, traj_metadata, _len, _traj_index, _frame_index
+    
+    First action: tf.Tensor(
+        [ 0.         0.         0.        -1.5707964  0.         1.5707964
+        0.       ], shape=(7,), dtype=float32)
+    
+    First state_observation: tf.Tensor(
+        [ 8.1482057e-09 -3.0994420e-06  1.5068048e+00  1.5707979e+00
+        -8.7422947e-08  8.7422784e-08  0.0000000e+00], shape=(7,), dtype=float32)
+    """
     dataset = dataset.traj_map(restructure, num_parallel_calls)
+
+    """
+    Here, we've removed the state_observation (observation dict only has 'image_primary', 'timestep' keys). 
+    So now we have actions which are joint values, not EEF values.
+
+    Item keys: observation, task, action, dataset_name, absolute_action_mask
+    First action: tf.Tensor(
+        [ 0.         0.         0.        -1.5707964  0.         1.5707964
+        0.       ], shape=(7,), dtype=float32)    
+    """
     dataset = dataset.traj_map(
         partial(
             normalize_action_and_proprio,
